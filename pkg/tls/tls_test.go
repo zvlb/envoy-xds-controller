@@ -63,13 +63,13 @@ func TestProvide(t *testing.T) {
 
 			ctrl := New(cl, dc, cfg, namespace, log)
 
-			index, err := ctrl.IndexCertificateSecrets(context.TODO())
+			err := ctrl.IndexCertificateSecrets(context.TODO())
 
 			if !errors.Is(err, wantErr) {
 				req.Equal(err, wantErr)
 			}
 
-			certs, err := ctrl.Provide(context.TODO(), index, vh, tlsConfig)
+			certs, err := ctrl.Provide(context.TODO(), vh.Domains, tlsConfig)
 			req.Equal(certs, wantCerts)
 
 			if !errors.Is(err, wantErr) {

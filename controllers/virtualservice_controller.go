@@ -34,7 +34,7 @@ import (
 	"github.com/kaasops/envoy-xds-controller/pkg/hash"
 	"github.com/kaasops/envoy-xds-controller/pkg/tls"
 	xdscache "github.com/kaasops/envoy-xds-controller/pkg/xds/cache"
-	"github.com/kaasops/envoy-xds-controller/pkg/xds/filterchain"
+	"github.com/kaasops/envoy-xds-controller/pkg/xds/route"
 	"github.com/kaasops/k8s-utils"
 	api_errors "k8s.io/apimachinery/pkg/api/errors"
 )
@@ -84,16 +84,17 @@ func (r *VirtualServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// Generate RouteConfiguration and add to xds cache
-	routeConfig, err := filterchain.MakeRouteConfig(virtualHost, getResourceName(req.Namespace, req.Name))
-
+	routeConfigs, err := route.MakeRouteConfig(virtualHost, getResourceName(req.Namespace, req.Name))
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	for _, nodeID := range NodeIDs(instance, r.Cache) {
-		log.Info("Adding route", "name:", routeConfig.Name)
-		if err := r.Cache.Update(nodeID, routeConfig); err != nil {
-			return ctrl.Result{}, err
+	for _, rc := range routeConfigs {
+		for _, nodeID := range NodeIDs(instance, r.Cache) {
+			log.Info("Adding route", "name:", rc.Name)
+			if err := r.Cache.Update(nodeID, rc); err != nil {
+				return ctrl.Result{}, err
+			}
 		}
 	}
 
@@ -109,11 +110,10 @@ func (r *VirtualServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// Check if tlsConfig valid
 	certsProvider := tls.New(r.Client, r.DiscoveryClient, r.Config, instance.Namespace, log)
-	index, err := certsProvider.IndexCertificateSecrets(ctx)
-	if err != nil {
+	if err := certsProvider.IndexCertificateSecrets(ctx); err != nil {
 		return ctrl.Result{}, err
 	}
-	errorList, err := certsProvider.Validate(ctx, index, virtualHost, instance.Spec.TlsConfig)
+	errorList, err := certsProvider.Validate(ctx, virtualHost.Domains, instance.Spec.TlsConfig)
 	if err != nil {
 		return ctrl.Result{}, err
 	}

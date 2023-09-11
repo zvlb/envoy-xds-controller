@@ -4,7 +4,8 @@ import (
 	accesslogv3 "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
-	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+
+	// routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	router "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
@@ -105,10 +106,12 @@ func (b *builder) WithHttpConnectionManager(accessLog *accesslogv3.AccessLog,
 }
 
 func (b *builder) WithFilterChainMatch(domains []string) Builder {
-	filterChainMatch := &listenerv3.FilterChainMatch{
+	// TODO: check if in domains array exist regex ans not regex domain
+	fcm := &listenerv3.FilterChainMatch{
 		ServerNames: domains,
 	}
-	b.filterChainMatch = filterChainMatch
+	b.filterChainMatch = fcm
+
 	return b
 }
 
@@ -163,22 +166,22 @@ func (b *builder) Build(name string) (*listenerv3.FilterChain, error) {
 	return filterchain, nil
 }
 
-func MakeRouteConfig(vh *routev3.VirtualHost, name string) (*routev3.RouteConfiguration, error) {
+// func MakeRouteConfig(vh *routev3.VirtualHost, name string) (*routev3.RouteConfiguration, error) {
 
-	// Replace Domains list, can make config problems!!!
-	routeConfig := &routev3.RouteConfiguration{
-		Name: name,
-		VirtualHosts: []*routev3.VirtualHost{{
-			Name:                name,
-			Domains:             []string{"*"},
-			Routes:              vh.Routes,
-			RequestHeadersToAdd: vh.RequestHeadersToAdd,
-		}},
-	}
+// 	// Replace Domains list, can make config problems!!!
+// 	routeConfig := &routev3.RouteConfiguration{
+// 		Name: name,
+// 		VirtualHosts: []*routev3.VirtualHost{{
+// 			Name:                name,
+// 			Domains:             []string{"*"},
+// 			Routes:              vh.Routes,
+// 			RequestHeadersToAdd: vh.RequestHeadersToAdd,
+// 		}},
+// 	}
 
-	if err := routeConfig.ValidateAll(); err != nil {
-		return nil, err
-	}
+// 	if err := routeConfig.ValidateAll(); err != nil {
+// 		return nil, err
+// 	}
 
-	return routeConfig, nil
-}
+// 	return routeConfig, nil
+// }

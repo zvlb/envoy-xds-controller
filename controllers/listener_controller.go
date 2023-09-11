@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	api_errors "k8s.io/apimachinery/pkg/api/errors"
@@ -40,9 +41,11 @@ import (
 	resourcev3 "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
 	v1alpha1 "github.com/kaasops/envoy-xds-controller/api/v1alpha1"
 	"github.com/kaasops/envoy-xds-controller/pkg/config"
+	"github.com/kaasops/envoy-xds-controller/pkg/hack"
 	"github.com/kaasops/envoy-xds-controller/pkg/tls"
 	xdscache "github.com/kaasops/envoy-xds-controller/pkg/xds/cache"
 	"github.com/kaasops/envoy-xds-controller/pkg/xds/filterchain"
+	"github.com/kaasops/envoy-xds-controller/pkg/xds/route"
 )
 
 // ListenerReconciler reconciles a Listener object
@@ -130,14 +133,18 @@ func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 func (r *ListenerReconciler) buildFilterChain(ctx context.Context, log logr.Logger, b filterchain.Builder, virtualServices []v1alpha1.VirtualService, namespace string) ([]*listenerv3.FilterChain, error) {
 	var chains []*listenerv3.FilterChain
+
 	certsProvider := tls.New(r.Client, r.DiscoveryClient, r.Config, namespace, log)
-	index, err := certsProvider.IndexCertificateSecrets(ctx)
-	if err != nil {
+	if err := certsProvider.IndexCertificateSecrets(ctx); err != nil {
 		return nil, err
 	}
+
 	for _, vs := range virtualServices {
 		log.V(1).WithValues("Virtual Service", vs.Name).Info("Generate Filter Chains for Virtual Service")
 
+		// if vs.Name == "desktop-melbet.test.1x001.com" {
+		// 	fmt.Print("LOL")
+		// }
 		// Get envoy virtualhost from virtualSerive spec
 		virtualHost := &routev3.VirtualHost{}
 		if err := r.Unmarshaler.Unmarshal(vs.Spec.VirtualHost.Raw, virtualHost); err != nil {
@@ -153,6 +160,12 @@ func (r *ListenerReconciler) buildFilterChain(ctx context.Context, log logr.Logg
 			}
 			httpFilters = append(httpFilters, hf)
 		}
+
+		// Create RouteConfigs for envoy VirtualService
+		// routeConfigs, err := route.MakeRouteConfig(virtualHost, getResourceName(namespace, vs.Name))
+		// if err != nil {
+		// 	return ctrl.Result{}, err
+		// }
 
 		if vs.Spec.AccessLogConfig != nil {
 			if vs.Spec.AccessLog != nil {
@@ -177,38 +190,37 @@ func (r *ListenerReconciler) buildFilterChain(ctx context.Context, log logr.Logg
 		}
 
 		if vs.Spec.TlsConfig == nil {
-			f, err := b.WithHttpConnectionManager(
+			generatedChains := GenerateFilterChains(
+				vs.Name,
+				"",
+				vs.Namespace,
+				virtualHost.Domains,
+				b,
 				accessLog,
 				httpFilters,
-				getResourceName(vs.Namespace, vs.Name),
-			).
-				WithFilterChainMatch(virtualHost.Domains).
-				Build(vs.Name)
-			if err != nil {
-				return nil, err
-			}
-			chains = append(chains, f)
+				log,
+			)
+			chains = append(chains, generatedChains...)
 			continue
 		}
 
-		certs, err := certsProvider.Provide(ctx, index, virtualHost, vs.Spec.TlsConfig)
+		certs, err := certsProvider.Provide(ctx, virtualHost.Domains, vs.Spec.TlsConfig)
 		if err != nil {
 			return nil, err
 		}
 
 		for certName, domains := range certs {
-			virtualHost.Domains = domains
-			f, err := b.WithDownstreamTlsContext(certName).
-				WithFilterChainMatch(domains).
-				WithHttpConnectionManager(accessLog,
-					httpFilters,
-					getResourceName(vs.Namespace, vs.Name),
-				).
-				Build(vs.Name)
-			if err != nil {
-				log.WithValues("Certificate Name", certName).Error(err, "Can't create Filter Chain")
-			}
-			chains = append(chains, f)
+			generatedChains := GenerateFilterChains(
+				vs.Name,
+				certName,
+				vs.Namespace,
+				domains,
+				b,
+				accessLog,
+				httpFilters,
+				log,
+			)
+			chains = append(chains, generatedChains...)
 		}
 	}
 	return chains, nil
@@ -231,4 +243,87 @@ func (r *ListenerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			}
 		})).
 		Complete(r)
+}
+
+func GenerateFilterChains(
+	name, certName, namespace string,
+	domains []string,
+	b filterchain.Builder,
+	al *accesslogv3.AccessLog,
+	hfs []*hcmv3.HttpFilter,
+	log logr.Logger,
+) []*listenerv3.FilterChain {
+	var chains []*listenerv3.FilterChain
+
+	domainsWithRegex, domainsWithoutRegex := hack.CheckRegex(domains)
+
+	if certName == "" {
+		if len(domainsWithoutRegex) > 0 {
+			f, err := b.
+				WithFilterChainMatch(domainsWithoutRegex).
+				WithHttpConnectionManager(al,
+					hfs,
+					getResourceName(namespace, name),
+				).
+				Build(name)
+			if err != nil {
+				log.WithValues("Certificate Name", certName).Error(err, "Can't create Filter Chain")
+			}
+			chains = append(chains, f)
+		}
+
+		if len(domainsWithRegex) > 0 {
+			wildcardForRerex := hack.GetWildcardsForRegexDomains(domainsWithRegex)
+
+			for wc := range wildcardForRerex {
+				f, err := b.
+					WithFilterChainMatch([]string{wc}).
+					WithHttpConnectionManager(al,
+						hfs,
+						fmt.Sprintf("%s-%s", route.RegexPrefix, getResourceName(namespace, name)),
+					).
+					Build(name)
+				if err != nil {
+					log.WithValues("Certificate Name", certName).Error(err, "Can't create Filter Chain")
+				}
+				chains = append(chains, f)
+			}
+		}
+
+		return chains
+	}
+
+	if len(domainsWithoutRegex) > 0 {
+		f, err := b.WithDownstreamTlsContext(certName).
+			WithFilterChainMatch(domainsWithoutRegex).
+			WithHttpConnectionManager(al,
+				hfs,
+				getResourceName(namespace, name),
+			).
+			Build(name)
+		if err != nil {
+			log.WithValues("Certificate Name", certName).Error(err, "Can't create Filter Chain")
+		}
+		chains = append(chains, f)
+	}
+
+	if len(domainsWithRegex) > 0 {
+		wildcardForRerex := hack.GetWildcardsForRegexDomains(domainsWithRegex)
+
+		for wc := range wildcardForRerex {
+			f, err := b.WithDownstreamTlsContext(certName).
+				WithFilterChainMatch([]string{wc}).
+				WithHttpConnectionManager(al,
+					hfs,
+					fmt.Sprintf("%s-%s", route.RegexPrefix, getResourceName(namespace, name)),
+				).
+				Build(name)
+			if err != nil {
+				log.WithValues("Certificate Name", certName).Error(err, "Can't create Filter Chain")
+			}
+			chains = append(chains, f)
+		}
+	}
+
+	return chains
 }
