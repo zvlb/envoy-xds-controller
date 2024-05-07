@@ -1,4 +1,4 @@
-name: Build and Test
+name: Build and Push
 
 # This workflow will run on master branch and on any pull requests targeting master
 on:
@@ -7,7 +7,7 @@ on:
       - 'v*'
 jobs:
   build-and-push-docker-image:
-    name: Build and push Docker image
+    name: Build and push Docker images
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -29,10 +29,18 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build image and push to Docker Hub
+      - name: Build Main image and push to Docker Hub
         uses: docker/build-push-action@v2
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ github.repository }}:${{ steps.tag.outputs.TAG }},${{ github.repository }}:latest
+
+      - name: Build UI image and push to Docker Hub
+        uses: docker/build-push-action@v2
+        with:
+          context: ./ui
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ github.repository }}-ui:${{ steps.tag.outputs.TAG }},${{ github.repository }}-ui:latest
