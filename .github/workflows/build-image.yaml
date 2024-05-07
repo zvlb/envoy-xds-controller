@@ -9,6 +9,14 @@ jobs:
   build-and-push-docker-image:
     name: Build and push Docker images
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - context: "."
+            tags: ${{ github.repository }}:${{ steps.tag.outputs.TAG }},${{ github.repository }}:latest
+          - context: ./ui
+            image: ${{ github.repository }}-ui:${{ steps.tag.outputs.TAG }},${{ github.repository }}-ui:latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -37,10 +45,10 @@ jobs:
           push: true
           tags: ${{ github.repository }}:${{ steps.tag.outputs.TAG }},${{ github.repository }}:latest
 
-      - name: Build UI image and push to Docker Hub
+      - name: Build image and push to Docker Hub
         uses: docker/build-push-action@v2
         with:
-          context: ./ui
+          context: ${{ matrix.context }}
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ github.repository }}-ui:${{ steps.tag.outputs.TAG }},${{ github.repository }}-ui:latest
+          tags: ${{ matrix.tags }}
