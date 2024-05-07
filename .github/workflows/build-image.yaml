@@ -16,7 +16,7 @@ jobs:
           - context: "."
             tags: ${{ github.repository }}:${{ steps.tag.outputs.TAG }},${{ github.repository }}:latest
           - context: ./ui
-            image: ${{ github.repository }}-ui:${{ steps.tag.outputs.TAG }},${{ github.repository }}-ui:latest
+            tags: ${{ github.repository }}-ui:${{ steps.tag.outputs.TAG }},${{ github.repository }}-ui:latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
