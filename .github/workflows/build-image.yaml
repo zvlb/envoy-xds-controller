@@ -6,7 +6,7 @@ on:
     tags:
       - 'v*'
 jobs:
-  build-and-push-docker-images:
+  build-and-push-docker-image:
     name: Build and push Docker images
     runs-on: ubuntu-latest
     steps:
