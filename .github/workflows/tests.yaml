@@ -20,7 +20,16 @@ jobs:
     permissions:
       contents: read   #  for actions/checkout
     steps:
+    - name: checkout repo
+      uses: actions/checkout@main
     - name: Run Coverage Tests
-      run: make conformance-1.29
+      run: make conformance
+  e2e-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read   #  for actions/checkout
+    steps:
+    - name: checkout repo
+      uses: actions/checkout@main
     - name: Run E2e Tests
-      run: make e2e-1.29
+      run: make e2e
