@@ -1,0 +1,26 @@
+name: Tests
+on:
+  push:
+    branches:
+    - "main"
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+    - "main"
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  coverage-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read   #  for actions/checkout
+    steps:
+    - name: Run Coverage Tests
+      run: make conformance
+    - name: Run E2e Tests
+      run: make e2e

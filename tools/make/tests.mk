@@ -18,6 +18,9 @@ unit-test: kube-manifests kube-generate fmt vet envtest ## Run unit tests.
 
 # Conformance tests
 
+.PHONY: conformance
+conformance: conformance-1.29
+
 .PHONY: conformance-1.29
 conformance-1.29: kind-with-registry-1.29 image.build-local image.push-local kube-deploy-local run-conformance cleanup-kind-with-registry
 
@@ -27,6 +30,9 @@ run-conformance:
 	go test -v -tags conformance ./test/conformance
 
 # E2E tests
+
+.PHONY: e2e
+e2e: e2e-1.29
 
 .PHONY: e2e-1.29
 e2e-1.29: kind-with-registry-1.29 image.build-local image.push-local kube-deploy-local envoy-1.30 run-e2e cleanup-kind-with-registry
