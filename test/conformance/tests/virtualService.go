@@ -17,10 +17,10 @@ import (
 func init() {
 	ConformanceTests = append(
 		ConformanceTests,
+		VirtualService_SaveSecretWithCertificate_AutoDiscovery,
 		VirtualService_VirtualHostCannotBeEmptyTest,
 		VirtualService_InvalidVirtualHost,
 		VirtualService_SaveSecretWithCertificate_SecretRef,
-		// VirtualService_SaveSecretWithCertificate_AutoDiscovery,
 		VirtualService_SaveSecretWithCertificate_SecretRef_DiferentNamespaces,
 		VirtualService_SaveSecretWithCertificate_AutoDiscovery_DiferentNamespaces,
 	)
