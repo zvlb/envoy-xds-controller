@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -18,6 +19,12 @@ import (
 func ApplyManifest(c client.Client, manifestPath string, ns string) error {
 	b, err := os.ReadFile(manifestPath)
 	if err != nil {
+		fmt.Printf("File: %s, ns: %s\n", manifestPath, ns)
+		directory, err := os.Getwd() //get the current directory using the built-in function
+		if err != nil {
+			fmt.Println(err) //print the error if obtained
+		}
+		fmt.Println("Current working directory:", directory)
 		return err
 	}
 
