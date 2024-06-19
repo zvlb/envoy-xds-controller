@@ -67,9 +67,8 @@ var VirtualService_SaveSecretWithCertificate_AutoDiscovery = utils.TestCase{
 			t,
 			suite,
 			"exc-kaasops-io", suite.Namespace, "../testdata/certificates/exc-kaasops-io.yaml", // Secret data
-			"exc-kaasops-io-autodiscovery", "../testdata/conformance/virtualservice-secret-control-autodiscovery.yaml", // Virtual Service data
+			"exc-kaasops-io-autodiscovery", "/home/runner/work/envoy-xds-controller/envoy-xds-controller/test/testdata/conformance/virtualservice-secret-control-autodiscovery.yaml", // Virtual Service data
 		)
-
 	},
 }
 
