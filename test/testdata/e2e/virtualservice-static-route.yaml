@@ -3,7 +3,7 @@ kind: VirtualService
 metadata:
   name: virtual-service-used-route
   annotations:
-    envoy.kaasops.io/node-id: test
+    envoy.kaasops.io/node-id: test,777
 spec:
   listener:
     name: http

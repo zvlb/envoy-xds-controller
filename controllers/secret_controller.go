@@ -55,20 +55,20 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	r.log = log.FromContext(ctx).WithValues("Envoy Secret", req.NamespacedName)
 	r.log.Info("Reconciling secret")
 
+	resourceName := getResourceName(req.Namespace, req.Name)
+
 	// Get Secret instance
 	instance := &v1alpha1.Secret{}
 	err := r.Get(ctx, req.NamespacedName, instance)
 	if err != nil {
 		if api_errors.IsNotFound(err) {
 			r.log.Info("Secret instance not found. Delete object fron xDS cache")
-			nodeIDs, err := r.Cache.GetNodeIDsForResource(resourcev3.SecretType, getResourceName(req.Namespace, req.Name))
+			nodeIDs, err := r.Cache.GetNodeIDsForResource(resourcev3.SecretType, resourceName)
 			if err != nil {
 				return ctrl.Result{}, errors.Wrap(err, errors.GetNodeIDForResource)
 			}
-			for _, nodeID := range nodeIDs {
-				if err := r.Cache.Delete(nodeID, resourcev3.SecretType, getResourceName(req.Namespace, req.Name)); err != nil {
-					return ctrl.Result{}, errors.Wrap(err, errors.CannotDeleteFromCacheMessage)
-				}
+			if err := r.Cache.Delete(nodeIDs, resourcev3.SecretType, resourceName); err != nil {
+				return ctrl.Result{}, errors.Wrap(err, errors.CannotDeleteFromCacheMessage)
 			}
 			return ctrl.Result{}, nil
 		}
@@ -85,10 +85,8 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, errors.Wrap(err, errors.UnmarshalMessage)
 	}
 
-	for _, nodeID := range k8s.NodeIDs(instance) {
-		if err := r.Cache.Update(nodeID, secret); err != nil {
-			return ctrl.Result{}, errors.Wrap(err, errors.CannotUpdateCacheMessage)
-		}
+	if err := r.Cache.Update(k8s.NodeIDs(instance), secret, resourceName); err != nil {
+		return ctrl.Result{}, errors.Wrap(err, errors.CannotUpdateCacheMessage)
 	}
 
 	return ctrl.Result{}, nil

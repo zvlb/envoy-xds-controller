@@ -3,15 +3,19 @@ package options
 import "google.golang.org/protobuf/encoding/protojson"
 
 const (
-	DefaultListenerName                            = "https"
+	DefaultListenerName = "https"
+
 	VirtualServiceListenerNameField                = "spec.listener.name"
 	VirtualServiceTemplateListenerNameField        = "spec.listener.name"
+	VirtualServiceStatusValidField                 = "status.valid"
 	VirtualServiceTemplateAccessLogConfigNameField = "spec.accessLog.name"
 	VirtualServiceTemplateNameField                = "spec.template.name"
-	NodeIDAnnotation                               = "envoy.kaasops.io/node-id"
-	SecretLabelKey                                 = "envoy.kaasops.io/secret-type"
-	SdsSecretLabelValue                            = "sds-cached"
-	WebhookSecretLabelValue                        = "webhook"
+	ClusterNameField                               = "spec.name"
+
+	NodeIDAnnotation        = "envoy.kaasops.io/node-id"
+	SecretLabelKey          = "envoy.kaasops.io/secret-type"
+	SdsSecretLabelValue     = "sds-cached"
+	WebhookSecretLabelValue = "webhook"
 
 	AutoDiscoveryLabel = "envoy.kaasops.io/autoDiscovery"
 	DomainAnnotation   = "envoy.kaasops.io/domains"

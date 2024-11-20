@@ -3,7 +3,7 @@ kind: Listener
 metadata:
   name: http
   annotations:
-    envoy.kaasops.io/node-id: test
+    envoy.kaasops.io/node-id: test,test12,test666,test777,test7777,test8888
 spec:
   name: http
   address:

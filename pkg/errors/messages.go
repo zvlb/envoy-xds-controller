@@ -25,7 +25,10 @@ var (
 	// Validate error
 	ValidateStructMessage                  = "cannot validate Specification"
 	VirtualHostCantBeEmptyMessage          = "virtualHost could not be empty"
+	VirtualServiceListenerMustBeSpecified  = "listener must be specified is virtualService or in used template"
+	VirtualServicesNotFoundMessage         = "virtualServices not found for listener"
 	ListenerCannotBeEmptyMessage           = "listener could not be empty"
+	ListenerFilterChainMustBeEmptyMessage  = "listener filter chain must be empty"
 	AccessLogConfigCannotBeEmptyMessage    = "accessLogConfig could not be empty"
 	AccessLogConfigDeleteUsedMessage       = "cannot delete accesslogconfig, bc is used in Virtual Services: "
 	HTTPFilterCannotBeEmptyMessage         = "httpFilter could not be empty"

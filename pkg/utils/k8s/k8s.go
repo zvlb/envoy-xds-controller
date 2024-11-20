@@ -18,22 +18,44 @@ import (
 )
 
 func NodeIDs(obj client.Object) []string {
-	annotation := NodeIDsAnnotation(obj)
-	if annotation == "" {
-		return nil
-	}
-	return strings.Split(annotation, ",")
-}
-
-func NodeIDsAnnotation(obj client.Object) string {
 	annotations := obj.GetAnnotations()
 
 	annotation, ok := annotations[options.NodeIDAnnotation]
 	if !ok {
-		return ""
+		return nil
 	}
 
-	return annotation
+	nodeIDs := strings.Split(annotation, ",")
+	nodeIDs = uniqSlice(nodeIDs)
+
+	// find * in nodeIDs
+	for _, nodeID := range nodeIDs {
+		if nodeID == "*" {
+			return []string{"*"}
+		}
+	}
+
+	return nodeIDs
+}
+
+func uniqSlice(slice []string) []string {
+	uniqueMap := make(map[string]struct{}, len(slice))
+
+	for _, s := range slice {
+		uniqueMap[s] = struct{}{}
+	}
+
+	if len(slice) == len(uniqueMap) {
+		return slice
+	}
+
+	uniqueSlice := make([]string, 0, len(uniqueMap))
+
+	for s, _ := range uniqueMap {
+		uniqueSlice = append(uniqueSlice, s)
+	}
+
+	return uniqueSlice
 }
 
 func NodeIDsContains(s1, s2 []string) bool {
@@ -132,6 +154,26 @@ func GetCertificateSecrets(ctx context.Context, cl client.Client, namespaces []s
 	return secrets, nil
 }
 
-func ResourceName(namespace, name string) string {
+// func ResourceName(namespace, name string) string {
+// 	return fmt.Sprintf("%s/%s", namespace, name)
+// }
+
+func GetResourceName(namespace, name string) string {
+	if namespace == "" {
+		namespace = "default"
+	}
 	return fmt.Sprintf("%s/%s", namespace, name)
+}
+
+func SplitResourceName(resourceName string) (namespace, name string, err error) {
+	splitResourceName := strings.Split(resourceName, "/")
+
+	if len(splitResourceName) < 2 {
+		return "", "", fmt.Errorf("invalid resource name %s", resourceName)
+	}
+
+	namespace = splitResourceName[0]
+	name = splitResourceName[1]
+
+	return
 }

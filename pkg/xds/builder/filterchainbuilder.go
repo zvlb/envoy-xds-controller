@@ -1,4 +1,4 @@
-package filterchain
+package builder
 
 import (
 	accesslogv3 "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
@@ -14,32 +14,14 @@ import (
 	wrappers "github.com/golang/protobuf/ptypes/wrappers"
 )
 
-type Builder interface {
-	WithDownstreamTlsContext(secret string) Builder
-	WithHttpConnectionManager(
-		accessLog *accesslogv3.AccessLog,
-		httpFilters []*hcm.HttpFilter,
-		routeConfigName string,
-		statPrefix string,
-		useRemoteAddress *wrappers.BoolValue,
-		upgradeConfigs []*hcm.HttpConnectionManager_UpgradeConfig,
-	) Builder
-	WithFilterChainMatch(domains []string) Builder
-	Build(name string) (*listenerv3.FilterChain, error)
-}
-
-type builder struct {
+type filterChainBuilder struct {
 	filterchain           *listenerv3.FilterChain
 	downstreamTlsContext  *tlsv3.DownstreamTlsContext
 	httpConnectionManager *hcm.HttpConnectionManager
 	filterChainMatch      *listenerv3.FilterChainMatch
 }
 
-func NewBuilder() *builder {
-	return &builder{}
-}
-
-func (b *builder) WithDownstreamTlsContext(secret string) Builder {
+func (b *filterChainBuilder) WithDownstreamTlsContext(secret string) *filterChainBuilder {
 	sdsTls := &tlsv3.DownstreamTlsContext{
 		CommonTlsContext: &tlsv3.CommonTlsContext{
 			TlsCertificateSdsSecretConfigs: []*tlsv3.SdsSecretConfig{{
@@ -60,13 +42,13 @@ func (b *builder) WithDownstreamTlsContext(secret string) Builder {
 	return b
 }
 
-func (b *builder) WithHttpConnectionManager(
+func (b *filterChainBuilder) WithHttpConnectionManager(
 	accessLog *accesslogv3.AccessLog,
 	httpFilters []*hcm.HttpFilter,
 	routeConfigName string, statPrefix string,
 	useRemoteAddress *wrappers.BoolValue,
 	upgradeConfigs []*hcm.HttpConnectionManager_UpgradeConfig,
-) Builder {
+) *filterChainBuilder {
 	hfs := []*hcm.HttpFilter{}
 	if len(httpFilters) > 0 {
 		hfs = append(hfs, httpFilters...)
@@ -98,7 +80,7 @@ func (b *builder) WithHttpConnectionManager(
 	return b
 }
 
-func (b *builder) WithFilterChainMatch(domains []string) Builder {
+func (b *filterChainBuilder) WithFilterChainMatch(domains []string) *filterChainBuilder {
 	if slices.Contains(domains, "*") {
 		return b
 	}
@@ -110,7 +92,7 @@ func (b *builder) WithFilterChainMatch(domains []string) Builder {
 	return b
 }
 
-func (b *builder) Build(name string) (*listenerv3.FilterChain, error) {
+func (b *filterChainBuilder) Build(name string) (*listenerv3.FilterChain, error) {
 	// I'm get name from prefix. Not good idea
 	filterchain := &listenerv3.FilterChain{
 		Name: name,

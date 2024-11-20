@@ -19,9 +19,10 @@ package v1alpha1
 import (
 	"context"
 	"encoding/json"
+	"strings"
+
 	"github.com/kaasops/envoy-xds-controller/pkg/merge"
 	"k8s.io/apimachinery/pkg/types"
-	"strings"
 
 	"github.com/kaasops/envoy-xds-controller/pkg/errors"
 	"github.com/kaasops/envoy-xds-controller/pkg/utils/hash"
@@ -167,7 +168,7 @@ func (tc *TlsConfig) GetTLSType() (string, error) {
 	return "", errors.New(errors.ZeroParamMessage)
 }
 
-func FillFromTemplateIfNeeded(ctx context.Context, client client.Client, vs *VirtualService) error {
+func (vs *VirtualService) FillFromTemplateIfNeeded(ctx context.Context, client client.Client) error {
 	if vs.Spec.Template == nil {
 		return nil
 	}
@@ -221,4 +222,46 @@ func FillFromTemplateIfNeeded(ctx context.Context, client client.Client, vs *Vir
 		return err
 	}
 	return nil
+}
+
+func (vs *VirtualService) GetLinkedListener(cl client.Client) (Listener, error) {
+	listenerNN := types.NamespacedName{
+		Namespace: vs.Namespace,
+	}
+
+	if vs.Spec.Listener == nil {
+		if vs.Spec.Template == nil {
+			return Listener{}, errors.NewUKS(errors.VirtualServiceListenerMustBeSpecified)
+		}
+
+		// Get Virtual Service Template
+		template := VirtualServiceTemplate{}
+		err := cl.Get(context.Background(), types.NamespacedName{
+			Namespace: vs.Namespace,
+			Name:      vs.Spec.Template.Name,
+		}, &template)
+		if err != nil {
+			return Listener{}, errors.Wrap(err, errors.GetFromKubernetesMessage)
+		}
+
+		if template.Spec.Listener == nil {
+			return Listener{}, errors.NewUKS(errors.VirtualServiceListenerMustBeSpecified)
+		}
+
+		listenerNN = types.NamespacedName{
+			Name: template.Spec.Listener.Name,
+		}
+	} else {
+		listenerNN = types.NamespacedName{
+			Name: vs.Spec.Listener.Name,
+		}
+	}
+
+	listener := Listener{}
+	err := cl.Get(context.Background(), listenerNN, &listener)
+	if err != nil {
+		return listener, err
+	}
+
+	return listener, nil
 }

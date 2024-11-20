@@ -1,20 +1,20 @@
-package tls
+package builder
 
 import (
 	"context"
 	"fmt"
 
-	"github.com/go-logr/logr"
 	"github.com/kaasops/envoy-xds-controller/api/v1alpha1"
 	"github.com/kaasops/envoy-xds-controller/pkg/errors"
 	"github.com/kaasops/envoy-xds-controller/pkg/options"
 	"github.com/kaasops/envoy-xds-controller/pkg/utils"
+	"github.com/kaasops/envoy-xds-controller/pkg/utils/k8s"
 	"k8s.io/apimachinery/pkg/labels"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	corev1 "k8s.io/api/core/v1"
 )
+
+// TODO: reconfigure (don't need Factory here)
 
 var (
 	secretLabel = labels.Set{options.SecretLabelKey: options.SdsSecretLabelValue}
@@ -22,33 +22,20 @@ var (
 
 type TlsFactory struct {
 	*v1alpha1.TlsConfig
-
-	client        client.Client
-	defaultIssuer string
-	Namespace     string
-
-	CertificatesIndex map[string]corev1.Secret
-
-	log logr.Logger
+	vsNamespace       string
+	certificatesIndex map[string]corev1.Secret
 }
 
 func NewTlsFactory(
-	ctx context.Context,
 	tlsConfig *v1alpha1.TlsConfig,
-	client client.Client,
-	defaultIssuer string,
 	namespace string,
 	index map[string]corev1.Secret,
 ) *TlsFactory {
 	tf := &TlsFactory{
 		TlsConfig:         tlsConfig,
-		client:            client,
-		Namespace:         namespace,
-		CertificatesIndex: index,
-		defaultIssuer:     defaultIssuer,
+		vsNamespace:       namespace,
+		certificatesIndex: index,
 	}
-
-	tf.log = log.Log.WithValues("factory", "virtualservice", "package", "tls")
 
 	return tf
 }
@@ -61,56 +48,49 @@ func (tf *TlsFactory) Provide(ctx context.Context, domains []string) (map[string
 
 	switch tlsType {
 	case v1alpha1.SecretRefType:
-		return tf.provideSecretRef(ctx, domains)
+		return tf.provideSecretRef(domains)
 	case v1alpha1.AutoDiscoveryType:
-		return tf.provideAutoDiscovery(ctx, domains)
+		return tf.provideAutoDiscovery(domains)
 	}
 
 	return nil, nil
 }
 
-func (tf *TlsFactory) provideSecretRef(ctx context.Context, domains []string) (map[string][]string, error) {
-	// Create domain row
-	var secretName string
+func (tf *TlsFactory) provideSecretRef(domains []string) (map[string][]string, error) {
+	var secretNamespace string
 
 	if tf.TlsConfig.SecretRef.Namespace != nil {
-		secretName = fmt.Sprintf("%s/%s",
-			*tf.TlsConfig.SecretRef.Namespace,
-			tf.TlsConfig.SecretRef.Name,
-		)
+		secretNamespace = *tf.TlsConfig.SecretRef.Namespace
 	} else {
-		secretName = fmt.Sprintf("%s/%s",
-			tf.Namespace,
-			tf.TlsConfig.SecretRef.Name,
-		)
+		secretNamespace = tf.vsNamespace
 	}
 
 	return map[string][]string{
-		secretName: domains,
+		k8s.GetResourceName(secretNamespace, tf.TlsConfig.SecretRef.Name): domains,
 	}, nil
 }
 
-func (tf *TlsFactory) provideAutoDiscovery(ctx context.Context, domains []string) (map[string][]string, error) {
+func (tf *TlsFactory) provideAutoDiscovery(domains []string) (map[string][]string, error) {
 	CertificatesWithDomains := make(map[string][]string)
 
 	for _, domain := range domains {
 		var secret corev1.Secret
 		// Validate certificate exist in index!
-		secret, ok := tf.CertificatesIndex[domain]
+		secret, ok := tf.certificatesIndex[domain]
 		if !ok {
 			wildcardDomain := utils.GetWildcardDomain(domain)
-			secret, ok = tf.CertificatesIndex[wildcardDomain]
+			secret, ok = tf.certificatesIndex[wildcardDomain]
 			if !ok {
 				return CertificatesWithDomains, errors.NewUKS(fmt.Sprintf("domain - %v: %v", domain, errors.DiscoverNotFoundMessage))
 			}
 		}
 
-		d, ok := CertificatesWithDomains[fmt.Sprintf("%s/%s", secret.Namespace, secret.Name)]
+		d, ok := CertificatesWithDomains[k8s.GetResourceName(secret.Namespace, secret.Name)]
 		if ok {
 			d = append(d, domain)
-			CertificatesWithDomains[fmt.Sprintf("%s/%s", secret.Namespace, secret.Name)] = d
+			CertificatesWithDomains[k8s.GetResourceName(secret.Namespace, secret.Name)] = d
 		} else {
-			CertificatesWithDomains[fmt.Sprintf("%s/%s", secret.Namespace, secret.Name)] = []string{domain}
+			CertificatesWithDomains[k8s.GetResourceName(secret.Namespace, secret.Name)] = []string{domain}
 		}
 	}
 

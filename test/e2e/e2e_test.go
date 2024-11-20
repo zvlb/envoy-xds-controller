@@ -2,9 +2,10 @@ package conformance
 
 import (
 	"context"
-	"github.com/go-logr/logr"
 	"testing"
 	"time"
+
+	"github.com/go-logr/logr"
 
 	"github.com/stretchr/testify/require"
 	api_errors "k8s.io/apimachinery/pkg/api/errors"

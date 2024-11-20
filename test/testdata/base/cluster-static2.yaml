@@ -1,11 +1,11 @@
 apiVersion: envoy.kaasops.io/v1alpha1
 kind: Cluster
 metadata:
-  name: static
+  name: static2
   annotations:
-    envoy.kaasops.io/node-id: test1,test2,test12
+    envoy.kaasops.io/node-id: test1,test2
 spec:
-  name: static
+  name: static2
   connect_timeout: 1s
   lb_policy: LEAST_REQUEST
   type: STATIC

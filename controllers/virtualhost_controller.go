@@ -55,20 +55,20 @@ func (r *VirtualHostReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	r.log = log.FromContext(ctx).WithValues("Envoy Virtualhost", req.NamespacedName)
 	r.log.Info("Reconciling virtualhost")
 
+	resourceName := getResourceName(req.Namespace, req.Name)
+
 	// Get Virtualhost instance
 	instance := &v1alpha1.VirtualHost{}
 	err := r.Get(ctx, req.NamespacedName, instance)
 	if err != nil {
 		if api_errors.IsNotFound(err) {
 			r.log.V(1).Info("Virtualhost instance not found. Delete object fron xDS cache")
-			nodeIDs, err := r.Cache.GetNodeIDsForResource(resourcev3.VirtualHostType, getResourceName(req.Namespace, req.Name))
+			nodeIDs, err := r.Cache.GetNodeIDsForResource(resourcev3.VirtualHostType, resourceName)
 			if err != nil {
 				return ctrl.Result{}, errors.Wrap(err, errors.GetNodeIDForResource)
 			}
-			for _, nodeID := range nodeIDs {
-				if err := r.Cache.Delete(nodeID, resourcev3.VirtualHostType, getResourceName(req.Namespace, req.Name)); err != nil {
-					return ctrl.Result{}, errors.Wrap(err, errors.CannotDeleteFromCacheMessage)
-				}
+			if err := r.Cache.Delete(nodeIDs, resourcev3.VirtualHostType, resourceName); err != nil {
+				return ctrl.Result{}, errors.Wrap(err, errors.CannotDeleteFromCacheMessage)
 			}
 			return ctrl.Result{}, nil
 		}
@@ -85,10 +85,8 @@ func (r *VirtualHostReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, errors.Wrap(err, errors.UnmarshalMessage)
 	}
 
-	for _, nodeID := range k8s.NodeIDs(instance) {
-		if err := r.Cache.Update(nodeID, virtualhost); err != nil {
-			return ctrl.Result{}, errors.Wrap(err, errors.CannotUpdateCacheMessage)
-		}
+	if err := r.Cache.Update(k8s.NodeIDs(instance), virtualhost, resourceName); err != nil {
+		return ctrl.Result{}, errors.Wrap(err, errors.CannotUpdateCacheMessage)
 	}
 
 	return ctrl.Result{}, nil

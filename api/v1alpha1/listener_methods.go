@@ -18,7 +18,11 @@ package v1alpha1
 
 import (
 	"context"
+	"fmt"
+	"sort"
 
+	"github.com/kaasops/envoy-xds-controller/pkg/errors"
+	"github.com/kaasops/envoy-xds-controller/pkg/options"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -57,4 +61,67 @@ func (l *Listener) messageAlredySet(msg Message) bool {
 	}
 
 	return false
+}
+
+func (l *Listener) GetLinkedVirtualServices(ctx context.Context, cl client.Client) ([]VirtualService, error) {
+	// Get VirtualServices with matching listener
+	vsList := &VirtualServiceList{}
+	if err := cl.List(
+		ctx,
+		vsList,
+		client.InNamespace(l.Namespace),
+		client.MatchingFields{options.VirtualServiceListenerNameField: l.Name},
+		client.MatchingFields{options.VirtualServiceStatusValidField: "true"},
+	); err != nil {
+		return nil, errors.Wrap(err, errors.GetFromKubernetesMessage)
+	}
+
+	// Get VirtualServiceTemplates with matching listener
+	vstList := &VirtualServiceTemplateList{}
+	if err := cl.List(
+		ctx,
+		vstList,
+		client.InNamespace(l.Namespace),
+		client.MatchingFields{options.VirtualServiceTemplateListenerNameField: l.Name},
+	); err != nil {
+		return nil, errors.Wrap(err, errors.GetFromKubernetesMessage)
+	}
+
+	// Get VirtualServices with matching VistualServicesTemplates
+	for _, vst := range vstList.Items {
+		vsListTmp := &VirtualServiceList{}
+		if err := cl.List(
+			ctx,
+			vsListTmp,
+			client.InNamespace(l.Namespace),
+			client.MatchingFields{options.VirtualServiceListenerNameField: vst.Name},
+			client.MatchingFields{options.VirtualServiceStatusValidField: "true"},
+		); err != nil {
+			return nil, errors.Wrap(err, errors.GetFromKubernetesMessage)
+		}
+
+		for _, vs := range vsListTmp.Items {
+			// If Listener set - then this vs already taken or not needed
+			if vs.Spec.Listener != nil {
+				continue
+			}
+			vsList.Items = append(vsList.Items, vs)
+		}
+	}
+
+	// Fill VirtualServices from templates
+	for _, vs := range vsList.Items {
+		err := vs.FillFromTemplateIfNeeded(ctx, cl)
+		if err != nil {
+			// This error is imposible for Virtual Service witb valid status
+			return nil, errors.Wrap(err, fmt.Sprintf("cannot fill VirtualService from template. VirtualService: %s", vs.Name))
+		}
+	}
+
+	// Sort VirtualServices by creation time
+	sort.Slice(vsList.Items, func(i, j int) bool {
+		return vsList.Items[i].CreationTimestamp.Before(&vsList.Items[j].CreationTimestamp)
+	})
+
+	return vsList.Items, nil
 }

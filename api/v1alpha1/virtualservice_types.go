@@ -33,11 +33,10 @@ type VirtualServiceSpec struct {
 
 // VirtualServiceStatus defines the observed state of VirtualService
 type VirtualServiceStatus struct {
-	Message     Message       `json:"message,omitempty"`
-	Valid       bool          `json:"valid"`
-	UsedSecrets []ResourceRef `json:"usedSecrets,omitempty"`
-
-	LastAppliedHash *uint32 `json:"lastAppliedHash,omitempty"`
+	Message         Message                        `json:"message,omitempty"`
+	Valid           bool                           `json:"valid"`
+	UsedResources   map[resourceType][]ResourceRef `json:"usedResources,omitempty"`
+	LastAppliedHash *uint32                        `json:"lastAppliedHash,omitempty"`
 }
 
 //+kubebuilder:object:root=true

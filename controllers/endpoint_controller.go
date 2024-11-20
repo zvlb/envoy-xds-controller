@@ -55,20 +55,20 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	r.log = log.FromContext(ctx).WithValues("Envoy Endpoint", req.NamespacedName)
 	r.log.Info("Reconciling endpoint")
 
+	resourceName := getResourceName(req.Namespace, req.Name)
+
 	// Get Endpoint instance
 	instance := &v1alpha1.Endpoint{}
 	err := r.Get(ctx, req.NamespacedName, instance)
 	if err != nil {
 		if api_errors.IsNotFound(err) {
 			r.log.Info("Endpoint instance not found. Delete object fron xDS cache")
-			nodeIDs, err := r.Cache.GetNodeIDsForResource(resourcev3.EndpointType, getResourceName(req.Namespace, req.Name))
+			nodeIDs, err := r.Cache.GetNodeIDsForResource(resourcev3.EndpointType, resourceName)
 			if err != nil {
 				return ctrl.Result{}, errors.Wrap(err, errors.GetNodeIDForResource)
 			}
-			for _, nodeID := range nodeIDs {
-				if err := r.Cache.Delete(nodeID, resourcev3.EndpointType, getResourceName(req.Namespace, req.Name)); err != nil {
-					return ctrl.Result{}, errors.Wrap(err, errors.CannotDeleteFromCacheMessage)
-				}
+			if err := r.Cache.Delete(nodeIDs, resourcev3.EndpointType, resourceName); err != nil {
+				return ctrl.Result{}, errors.Wrap(err, errors.CannotDeleteFromCacheMessage)
 			}
 			return ctrl.Result{}, nil
 		}
@@ -85,10 +85,8 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, errors.Wrap(err, errors.UnmarshalMessage)
 	}
 
-	for _, nodeID := range k8s.NodeIDs(instance) {
-		if err := r.Cache.Update(nodeID, endpoint); err != nil {
-			return ctrl.Result{}, errors.Wrap(err, errors.CannotUpdateCacheMessage)
-		}
+	if err := r.Cache.Update(k8s.NodeIDs(instance), endpoint, resourceName); err != nil {
+		return ctrl.Result{}, errors.Wrap(err, errors.CannotUpdateCacheMessage)
 	}
 
 	return ctrl.Result{}, nil

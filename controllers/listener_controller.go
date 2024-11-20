@@ -18,39 +18,34 @@ package controllers
 
 import (
 	"context"
-	"fmt"
+	"github.com/kaasops/envoy-xds-controller/pkg/xds/builder"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/go-logr/logr"
 
-	"google.golang.org/protobuf/proto"
-
+	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	resourcev3 "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
 
 	v1alpha1 "github.com/kaasops/envoy-xds-controller/api/v1alpha1"
+	fcb "github.com/kaasops/envoy-xds-controller/pkg/builder"
 	"github.com/kaasops/envoy-xds-controller/pkg/config"
 	"github.com/kaasops/envoy-xds-controller/pkg/errors"
-	"github.com/kaasops/envoy-xds-controller/pkg/factory/virtualservice"
-	"github.com/kaasops/envoy-xds-controller/pkg/factory/virtualservice/tls"
 	"github.com/kaasops/envoy-xds-controller/pkg/options"
 	"github.com/kaasops/envoy-xds-controller/pkg/utils/k8s"
 	xdscache "github.com/kaasops/envoy-xds-controller/pkg/xds/cache"
 
-	corev1 "k8s.io/api/core/v1"
 	api_errors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/kubernetes/pkg/util/slice"
 
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // ListenerReconciler reconciles a Listener object
@@ -60,6 +55,9 @@ type ListenerReconciler struct {
 	Cache  *xdscache.Cache
 	Config *config.Config
 
+	// TODO: update controller Runtime to use event.GenericEvent
+	EventChan chan event.GenericEvent
+
 	log logr.Logger
 }
 
@@ -68,24 +66,24 @@ type ListenerReconciler struct {
 //+kubebuilder:rbac:groups=envoy.kaasops.io,resources=listeners/finalizers,verbs=update
 
 func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	r.log = log.FromContext(ctx).WithValues("Envoy Listener", req.NamespacedName)
+	resourceName := k8s.GetResourceName(req.Namespace, req.Name)
+
+	r.log = log.FromContext(ctx).WithValues("Listener CR", resourceName)
 	r.log.Info("Reconciling listener")
 
-	var instanceMessage v1alpha1.Message
+	var listenerStatusMessage v1alpha1.Message
 
-	// Get listener instance
-	instance := &v1alpha1.Listener{}
-	err := r.Get(ctx, req.NamespacedName, instance)
+	// Get listener CR instance
+	listenerCR := &v1alpha1.Listener{}
+	err := r.Get(ctx, req.NamespacedName, listenerCR)
 	if err != nil {
 		// if listener not found, delete him from cache
 		if api_errors.IsNotFound(err) {
-			r.log.V(1).Info("Listener instance not found. Delete object from xDS cache")
-			nodeIDs, err := r.Cache.GetNodeIDsForResource(resourcev3.ListenerType, getResourceName(req.Namespace, req.Name))
-			if err != nil {
-				return ctrl.Result{}, errors.Wrap(err, errors.GetNodeIDForResource)
-			}
-			for _, nodeID := range nodeIDs {
-				if err := r.Cache.Delete(nodeID, resourcev3.ListenerType, getResourceName(req.Namespace, req.Name)); err != nil {
+			r.log.V(1).Info("Listener CR not found. Deleting object from xDS cache")
+			nodeIDs := r.Cache.GetNodeIDsForCustomResource(resourcev3.ListenerType, resourceName)
+			if len(nodeIDs) > 0 {
+				r.log.V(1).Info("Clean resource from xDS cache", "NodeIDs", nodeIDs)
+				if err := r.Cache.Delete(nodeIDs, resourcev3.ListenerType, resourceName); err != nil {
 					return ctrl.Result{}, errors.Wrap(err, errors.CannotDeleteFromCacheMessage)
 				}
 			}
@@ -94,106 +92,114 @@ func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, errors.Wrap(err, errors.GetFromKubernetesMessage)
 	}
 
-	// Validate Listener
-	if err := instance.Validate(ctx); err != nil {
-		instanceMessage.Add(err.Error())
-		if err := instance.SetError(ctx, r.Client, instanceMessage); err != nil {
+	// Validate Listener CR
+	if err := listenerCR.Validate(ctx); err != nil {
+		r.log.Error(err, "Listener CR validation failed")
+		listenerStatusMessage.Add(err.Error())
+		if err := listenerCR.SetError(ctx, r.Client, listenerStatusMessage); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
 	}
 
-	// Get listener NodeIDs
-	// TODO: If nodeid not set - use default nodeID
-	nodeIDs := k8s.NodeIDs(instance)
-	if len(nodeIDs) == 0 {
-		return ctrl.Result{}, errors.New(errors.NodeIDsEmpty)
-	}
-
-	// Get Envoy Listener from listener instance spec
+	// Get Envoy Listener from listener CR spec
 	listener := &listenerv3.Listener{}
-	options.Unmarshaler.Unmarshal(instance.Spec.Raw, listener)
-
-	// Get VirtualService objects with matching listener
-	// TODO: add functcionality to merge listener and virtual service in different namespaces
-	virtualServices := &v1alpha1.VirtualServiceList{}
-	listOpts := []client.ListOption{
-		client.InNamespace(req.Namespace),
-		client.MatchingFields{options.VirtualServiceListenerNameField: req.Name},
-	}
-	if err = r.List(ctx, virtualServices, listOpts...); err != nil {
-		return ctrl.Result{}, errors.Wrap(err, errors.GetFromKubernetesMessage)
+	if err := options.Unmarshaler.Unmarshal(listenerCR.Spec.Raw, listener); err != nil {
+		r.log.Error(err, "Cannot unmarshal Listener CR spec")
+		listenerStatusMessage.Add(errors.UnmarshalMessage)
+		if err := listenerCR.SetError(ctx, r.Client, listenerStatusMessage); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 
-	listener.Name = getResourceName(req.Namespace, req.Name)
+	// Listener FilterChains must be empty
+	if listener.FilterChains != nil {
+		r.log.V(1).Info("Listener FilterChains must be empty")
+		listenerStatusMessage.Add(errors.ListenerFilterChainMustBeEmptyMessage)
+		if err := listenerCR.SetError(ctx, r.Client, listenerStatusMessage); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
 
-	// TODO: if listener doesnt work with TLS - don't get certificate index
+	// Get VirtualServices with matching listener
+	vsList, err := listenerCR.GetLinkedVirtualServices(ctx, r.Client)
+	if err != nil {
+		r.log.Error(err, "Cannot get VirtualServices with matching listener")
+		listenerStatusMessage.Add(err.Error())
+		if err := listenerCR.SetError(ctx, r.Client, listenerStatusMessage); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		return ctrl.Result{}, err
+	}
+
+	if len(vsList) == 0 {
+		r.log.V(1).Info("Virtual Services not found")
+		listenerStatusMessage.Add(errors.VirtualServicesNotFoundMessage)
+		if err := listenerCR.SetError(ctx, r.Client, listenerStatusMessage); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// Get all NodeIDs
+	var nodeIDs []string
+	for _, vs := range vsList {
+		vsNodeIDs := k8s.NodeIDs(&vs)
+		if len(vsNodeIDs) > 0 {
+			if nodeIDs[0] != "*" {
+				nodeIDs = append(nodeIDs, nodeIDs...)
+			}
+		}
+	}
+	if len(nodeIDs) == 0 {
+		r.log.V(1).Info("cannot get NodeIDs from VirtualServices for listener")
+		return ctrl.Result{}, nil
+	}
 
 	// Create HashMap for fast searching of certificates
-	index, err := k8s.IndexCertificateSecrets(ctx, r.Client, r.Config.GetWatchNamespaces())
+	secretIndex, err := k8s.IndexCertificateSecrets(ctx, r.Client, r.Config.GetWatchNamespaces())
 	if err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "cannot generate TLS certificates index from Kubernetes secrets")
 	}
 
-	// Sort for find which VirtualService was created first
-	sort.Slice(virtualServices.Items, func(i, j int) bool {
-		return virtualServices.Items[i].CreationTimestamp.Before(&virtualServices.Items[j].CreationTimestamp)
-	})
-
-	// Save listener FilterChains
-	listenerFilterChains := listener.FilterChains
-
-	// Collect all VirtualServices for listener in each NodeID
 	for _, nodeID := range nodeIDs {
 		// errs for collect all errors with processing VirtualServices
 		var errs []error
 
-		// routeConfigs for collect Routes for listener
-		routeConfigs := make([]*routev3.RouteConfiguration, 0)
-
 		// chains for collect Filter Chains for listener
 		chains := make([]*listenerv3.FilterChain, 0)
 
-		for _, vs := range virtualServices.Items {
-			var vsMessage v1alpha1.Message
+		// routeConfigs for collect Routes for listener
+		routeConfigs := make([]*routev3.RouteConfiguration, 0)
 
-			if err := v1alpha1.FillFromTemplateIfNeeded(ctx, r.Client, &vs); err != nil {
-				if api_errors.IsNotFound(err) || errors.NeedStatusUpdate(err) {
-					vsMessage.Add(errors.Wrap(err, "cannot fill virtual service from template").Error())
-					if err := vs.SetError(ctx, r.Client, vsMessage); err != nil {
-						errs = append(errs, err)
-					}
-					continue
-				}
-				errs = append(errs, err)
+		// clusters for collect Clusters for listener
+		clusters := make([]*clusterv3.Cluster, 0)
+
+		// secret for collect secrets for listener
+		secrets := make([]*tlsv3.Secret, 0)
+
+		for _, vs := range vsList {
+			//vsResourceName := k8s.GetResourceName(vs.Namespace, vs.Name)
+
+			vsNodeIDs := k8s.NodeIDs(&vs)
+			if len(vsNodeIDs) == 0 {
 				continue
 			}
+			if vsNodeIDs[0] == "*" || slices.Contains(vsNodeIDs, nodeID) {
 
-			// If Virtual Service has nodeID or Virtual Service don't have any nondeID (or all NodeID)
-			if slices.Contains(k8s.NodeIDs(&vs), nodeID) || k8s.NodeIDs(&vs) == nil {
-				// Create Factory for TLS
-				tlsFactory := tls.NewTlsFactory(
+				xdsResourceBuilder, err := builder.New(
 					ctx,
-					vs.Spec.TlsConfig,
-					r.Client,
-					r.Config.GetDefaultIssuer(),
-					instance.Namespace,
-					index,
-				)
-
-				// Create Factory for VirtualService
-				vsFactory := virtualservice.NewVirtualServiceFactory(
 					r.Client,
 					&vs,
-					instance,
-					*tlsFactory,
+					secretIndex,
 				)
-
-				// Create VirtualService
-				virtSvc, err := vsFactory.Create(ctx, getResourceName(vs.Namespace, vs.Name))
 				if err != nil {
 					if errors.NeedStatusUpdate(err) {
-						vsMessage.Add(errors.Wrap(err, "cannot get Virtual Service struct").Error())
+						var vsMessage v1alpha1.Message
+						vsMessage.Add(err.Error())
 						if err := vs.SetError(ctx, r.Client, vsMessage); err != nil {
 							errs = append(errs, err)
 						}
@@ -203,239 +209,278 @@ func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 					continue
 				}
 
-				// Collect routes
-				routeConfigs = append(routeConfigs, virtSvc.RouteConfig)
-
-				// Get and collect Filter Chains
-				filterChains, err := virtualservice.FilterChains(&virtSvc)
+				vsChains, err := xdsResourceBuilder.BuildFilterChains()
 				if err != nil {
-					if errors.NeedStatusUpdate(err) {
-						vsMessage.Add(errors.Wrap(err, "cannot get Filter Chains").Error())
-						if err := vs.SetError(ctx, r.Client, vsMessage); err != nil {
-							errs = append(errs, err)
-						}
-						continue
-					}
 					errs = append(errs, err)
 					continue
 				}
 
-				chains = append(chains, filterChains...)
-
-				// If for this vs used some secrets (with certificates), add secrets to cache
-				if virtSvc.CertificatesWithDomains != nil {
-					for nn := range virtSvc.CertificatesWithDomains {
-						if err := r.makeEnvoySecret(ctx, nn, nodeID); err != nil {
-							return ctrl.Result{}, err
-						}
-					}
-
-					// Add information aboute used secrets to VirtualService
-					i := 0
-					keys := make([]string, len(virtSvc.CertificatesWithDomains))
-					for k := range virtSvc.CertificatesWithDomains {
-						keys[i] = k
-						i++
-					}
-					if err := vs.SetValidWithUsedSecrets(ctx, r.Client, keys, vsMessage); err != nil {
-						errs = append(errs, err)
-					}
-					continue
-				}
-
-				if err := vs.SetValid(ctx, r.Client, vsMessage); err != nil {
-					errs = append(errs, err)
-				}
-			}
-		}
-
-		// Check errors
-		if len(errs) != 0 {
-			for _, e := range errs {
-				r.log.Error(e, "FilterChain build errors")
-			}
-
-			// Stop working with this NodeID
-			continue
-		}
-
-		// Add builded FilterChains to Listener
-		listener.FilterChains = append(listenerFilterChains, chains...)
-		applyListener := proto.Clone(listener).(*listenerv3.Listener)
-
-		// Clear Listener, if don't have FilterChains
-		if len(listener.FilterChains) == 0 {
-			r.log.WithValues("NodeID", nodeID).Info("Listener FilterChain is empty, deleting")
-
-			instanceMessage.Add(fmt.Sprintf("NodeID: %s, %s", nodeID, "Listener FilterChain is empty"))
-
-			if err := r.Cache.Delete(nodeID, resourcev3.ListenerType, getResourceName(req.Namespace, req.Name)); err != nil {
-				return ctrl.Result{}, errors.Wrap(err, errors.CannotDeleteFromCacheMessage)
-			}
-			continue
-		}
-
-		// Validate Listener
-		if err := listener.ValidateAll(); err != nil {
-			instanceMessage.Add(fmt.Sprintf("NodeID: %s, %s", nodeID, errors.CannotValidateCacheResourceMessage))
-			if err := instance.SetError(ctx, r.Client, instanceMessage); err != nil {
-				return ctrl.Result{}, err
-			}
-			return reconcile.Result{}, errors.WrapUKS(err, errors.CannotValidateCacheResourceMessage)
-		}
-
-		// Update listener in xDS cache
-		r.log.V(1).WithValues("NodeID", nodeID).Info("Update listener", "name:", listener.Name)
-		if err := r.Cache.Update(nodeID, applyListener); err != nil {
-			return ctrl.Result{}, errors.Wrap(err, errors.CannotUpdateCacheMessage)
-		}
-
-		// Update routes in xDS cache
-		for _, rtConfig := range routeConfigs {
-			// Validate RouteConfig
-			if err := rtConfig.ValidateAll(); err != nil {
-				return reconcile.Result{}, errors.WrapUKS(err, errors.CannotValidateCacheResourceMessage)
-			}
-
-			r.log.V(1).WithValues("NodeID", nodeID).Info("Update route", "name:", rtConfig.Name)
-			if err := r.Cache.Update(nodeID, rtConfig); err != nil {
-				return ctrl.Result{}, errors.Wrap(err, errors.CannotUpdateCacheMessage)
+				chains = append(chains, vsChains...)
+				routeConfigs = append(routeConfigs, xdsResourceBuilder.GetRouteConfiguration())
+				clusters = append(clusters, xdsResourceBuilder.GetUsedClusters()...)
+				secrets = append(secrets, xdsResourceBuilder.GetUsedSecrets()...)
 			}
 		}
 
 	}
 
-	if err := instance.SetValid(ctx, r.Client, instanceMessage); err != nil {
-		return ctrl.Result{}, err
-	}
+	// for _, vs := range vsList {
+	// 	tlsFactory := tls.NewTlsFactory(
+	// 		ctx,
+	// 		vs.Spec.TlsConfig,
+	// 		r.Client,
+	// 		r.Config.GetDefaultIssuer(),
+	// 		listenerCR.Namespace,
+	// 		secretIndex,
+	// 	)
 
-	r.log.Info("Listener reconcilation finished")
+	// 	vsFactory := virtualservice.NewVirtualServiceFactory(
+	// 		r.Client,
+	// 		&vs,
+	// 		listenerCR,
+	// 		*tlsFactory,
+	// 	)
+
+	// 	virtSvc, err := vsFactory.Create(ctx, resourceName)
+	// 	if err != nil {
+	// 		if errors.NeedStatusUpdate(err) {
+	// 			var vsMessage v1alpha1.Message
+	// 			vsMessage.Add(err.Error())
+	// 			if err := listenerCR.SetError(ctx, r.Client, vsMessage); err != nil {
+	// 				errs = append(errs, err)
+	// 			}
+	// 			continue
+	// 		}
+	// 		errs = append(errs, err)
+	// 		continue
+	// 	}
+
+	// }
 
 	return ctrl.Result{}, nil
 }
 
+// 	listener.Name = resourceName
+
+// 	// Save listener FilterChains
+// 	listenerFilterChains := listener.FilterChains
+
+// 	// Collect all VirtualServices for listener in each NodeID
+// 	// for _, nodeID := range nodeIDs {
+// 	// errs for collect all errors with processing VirtualServices
+// 	var errs []error
+
+// 	// routeConfigs for collect Routes for listener
+// 	routeConfigs := make([]*routev3.RouteConfiguration, 0)
+
+// 	// chains for collect Filter Chains for listener
+// 	chains := make([]*listenerv3.FilterChain, 0)
+
+// 	for _, vs := range virtualServices.Items {
+// 		var vsMessage v1alpha1.Message
+
+// 		if err := v1alpha1.FillFromTemplateIfNeeded(ctx, r.Client, &vs); err != nil {
+// 			if api_errors.IsNotFound(err) || errors.NeedStatusUpdate(err) {
+// 				vsMessage.Add(errors.Wrap(err, "cannot fill virtual service from template").Error())
+// 				if err := vs.SetError(ctx, r.Client, vsMessage); err != nil {
+// 					errs = append(errs, err)
+// 				}
+// 				continue
+// 			}
+// 			errs = append(errs, err)
+// 			continue
+// 		}
+
+// 		// If Virtual Service has nodeID or Virtual Service don't have any nondeID (or all NodeID)
+// 		vsNodeIds := k8s.NodeIDs(&vs)
+
+// 		IntersectionNodeIDs := utils.IntersectionStrings(vsNodeIds, nodeIDs)
+
+// 		if vsNodeIds == nil || len(IntersectionNodeIDs) > 0 {
+// 			// Create HashMap for fast searching of certificates
+// 			index, err := k8s.IndexCertificateSecrets(ctx, r.Client, r.Config.GetWatchNamespaces())
+// 			if err != nil {
+// 				return ctrl.Result{}, errors.Wrap(err, "cannot generate TLS certificates index from Kubernetes secrets")
+// 			}
+
+// 			// Create Factory for TLS
+// 			tlsFactory := tls.NewTlsFactory(
+// 				ctx,
+// 				vs.Spec.TlsConfig,
+// 				r.Client,
+// 				r.Config.GetDefaultIssuer(),
+// 				instance.Namespace,
+// 				index,
+// 			)
+
+// 			// Create Factory for VirtualService
+// 			vsFactory := virtualservice.NewVirtualServiceFactory(
+// 				r.Client,
+// 				&vs,
+// 				instance,
+// 				*tlsFactory,
+// 			)
+
+// 			// Create VirtualService
+// 			virtSvc, err := vsFactory.Create(ctx, getResourceName(vs.Namespace, vs.Name))
+// 			if err != nil {
+// 				if errors.NeedStatusUpdate(err) {
+// 					vsMessage.Add(errors.Wrap(err, "cannot get Virtual Service struct").Error())
+// 					if err := vs.SetError(ctx, r.Client, vsMessage); err != nil {
+// 						errs = append(errs, err)
+// 					}
+// 					continue
+// 				}
+// 				errs = append(errs, err)
+// 				continue
+// 			}
+
+// 			// Collect routes
+// 			routeConfigs = append(routeConfigs, virtSvc.RouteConfig)
+
+// 			// Get and collect Filter Chains
+// 			filterChains, err := virtualservice.FilterChains(&virtSvc)
+// 			if err != nil {
+// 				if errors.NeedStatusUpdate(err) {
+// 					vsMessage.Add(errors.Wrap(err, "cannot get Filter Chains").Error())
+// 					if err := vs.SetError(ctx, r.Client, vsMessage); err != nil {
+// 						errs = append(errs, err)
+// 					}
+// 					continue
+// 				}
+// 				errs = append(errs, err)
+// 				continue
+// 			}
+
+// 			chains = append(chains, filterChains...)
+
+// 			// If for this vs used some secrets (with certificates), add secrets to cache
+// 			if virtSvc.CertificatesWithDomains != nil {
+// 				for nn := range virtSvc.CertificatesWithDomains {
+// 					if err := r.makeEnvoySecret(ctx, nn, nodeIDs); err != nil {
+// 						return ctrl.Result{}, err
+// 					}
+// 				}
+
+// 				// Add information aboute used secrets to VirtualService
+// 				i := 0
+// 				keys := make([]string, len(virtSvc.CertificatesWithDomains))
+// 				for k := range virtSvc.CertificatesWithDomains {
+// 					keys[i] = k
+// 					i++
+// 				}
+// 				if err := vs.SetValidWithUsedSecrets(ctx, r.Client, keys, vsMessage); err != nil {
+// 					errs = append(errs, err)
+// 				}
+// 			} else {
+// 				if err := vs.SetValid(ctx, r.Client, vsMessage); err != nil {
+// 					errs = append(errs, err)
+// 				}
+// 			}
+// 		}
+
+// 		// Check errors
+// 		if len(errs) != 0 {
+// 			for _, e := range errs {
+// 				r.log.Error(e, "FilterChain build errors")
+// 			}
+
+// 			// Stop working with this NodeID
+// 			continue
+// 		}
+
+// 		// Add builded FilterChains to Listener
+// 		listener.FilterChains = append(listenerFilterChains, chains...)
+// 	}
+
+// 	// Clear Listener, if don't have FilterChains
+// 	if len(listener.FilterChains) == 0 {
+// 		r.log.WithValues("NodeIDs", nodeIDs).Info("Listener FilterChain is empty, deleting")
+
+// 		instanceMessage.Add(fmt.Sprintf("NodeIDs: %s, %s", nodeIDs, "Listener FilterChain is empty"))
+// 		if err := instance.SetValid(ctx, r.Client, instanceMessage); err != nil {
+// 			return ctrl.Result{}, err
+// 		}
+
+// 		if err := r.Cache.Delete(nodeIDs, resourcev3.ListenerType, resourceName); err != nil {
+// 			return ctrl.Result{}, errors.Wrap(err, errors.CannotDeleteFromCacheMessage)
+// 		}
+
+// 		return ctrl.Result{}, nil
+// 	}
+
+// 	applyListener := proto.Clone(listener).(*listenerv3.Listener)
+
+// 	// Validate Listener
+// 	if err := listener.ValidateAll(); err != nil {
+// 		instanceMessage.Add(fmt.Sprintf("NodeID: %s, %s", nodeIDs, errors.CannotValidateCacheResourceMessage))
+// 		if err := instance.SetError(ctx, r.Client, instanceMessage); err != nil {
+// 			return ctrl.Result{}, err
+// 		}
+// 		return reconcile.Result{}, errors.WrapUKS(err, errors.CannotValidateCacheResourceMessage)
+// 	}
+
+// 	// Update listener in xDS cache
+// 	r.log.V(1).WithValues("NodeIDs", nodeIDs).Info("Update listener", "name:", listener.Name)
+// 	if err := r.Cache.Update(IntersectionNodeIDs, applyListener, resourceName); err != nil {
+// 		return ctrl.Result{}, errors.Wrap(err, errors.CannotUpdateCacheMessage)
+// 	}
+
+// 	// Update routes in xDS cache
+// 	for _, rtConfig := range routeConfigs {
+// 		rtName := getResourceName(resourceName, rtConfig.Name)
+
+// 		// Validate RouteConfig
+// 		if err := rtConfig.ValidateAll(); err != nil {
+// 			return reconcile.Result{}, errors.WrapUKS(err, errors.CannotValidateCacheResourceMessage)
+// 		}
+
+// 		r.log.V(1).WithValues("NodeIDs", nodeIDs).Info("Update route", "name:", rtConfig.Name)
+// 		if err := r.Cache.Update(nodeIDs, rtConfig, rtName); err != nil { //BLYAT'
+// 			return ctrl.Result{}, errors.Wrap(err, errors.CannotUpdateCacheMessage)
+// 		}
+// 	}
+
+// 	if err := instance.SetValid(ctx, r.Client, instanceMessage); err != nil {
+// 		return ctrl.Result{}, err
+// 	}
+
+// 	r.log.Info("Listener reconcilation finished")
+
+// 	return ctrl.Result{}, nil
+// }
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *ListenerReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// Add listener name to index
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &v1alpha1.VirtualService{}, options.VirtualServiceListenerNameField, func(rawObject client.Object) []string {
-		virtualService := rawObject.(*v1alpha1.VirtualService)
-		// if listener field is empty use default listener name as index
-		if virtualService.Spec.Listener == nil {
-			return []string{options.DefaultListenerName}
-		}
-		return []string{virtualService.Spec.Listener.Name}
-	}); err != nil {
-		return errors.Wrap(err, "cannot add Listener names to Listener Reconcile Index")
-	}
-
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &v1alpha1.VirtualServiceTemplate{}, options.VirtualServiceTemplateListenerNameField, func(rawObject client.Object) []string {
-		vst := rawObject.(*v1alpha1.VirtualServiceTemplate)
-		// if listener field is empty use default listener name as index
-		if vst.Spec.Listener == nil {
-			return []string{}
-		}
-		return []string{vst.Spec.Listener.Name}
-	}); err != nil {
-		return errors.Wrap(err, "cannot add Listener names to Listener Reconcile Index")
-	}
-
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &v1alpha1.VirtualServiceTemplate{}, options.VirtualServiceTemplateAccessLogConfigNameField, func(rawObject client.Object) []string {
-		vst := rawObject.(*v1alpha1.VirtualServiceTemplate)
-		// if listener field is empty use default listener name as index
-		if vst.Spec.Listener == nil {
-			return []string{}
-		}
-		return []string{vst.Spec.AccessLogConfig.Name}
-	}); err != nil {
-		return errors.Wrap(err, "cannot add Access log config names to Listener Reconcile Index")
-	}
-
-	// Add template name to index
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &v1alpha1.VirtualService{}, options.VirtualServiceTemplateNameField, func(rawObject client.Object) []string {
-		virtualService := rawObject.(*v1alpha1.VirtualService)
-		if virtualService.Spec.Template == nil {
-			return []string{}
-		}
-		return []string{virtualService.Spec.Template.Name}
-	}); err != nil {
-		return errors.Wrap(err, "cannot add template names to Listener Reconcile Index")
-	}
-
-	// EnqueueRequestsFromMapFunc
-	// List all VirtualServies and finds listener ref
-	listenerRequestMapper := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
-		var virtualServiceList v1alpha1.VirtualServiceList
-		var reconcileRequests []reconcile.Request
-		uniq := make(map[v1alpha1.ResourceRef]struct{})
-		if err := mgr.GetCache().List(ctx, &virtualServiceList); err != nil {
-			r.log.Error(err, "failed to list VirtualService resources")
-			return nil
-		}
-		for _, vs := range virtualServiceList.Items {
-			err := v1alpha1.FillFromTemplateIfNeeded(ctx, r.Client, &vs)
-			if err != nil {
-				r.log.Error(err, "failed to fill VirtualService from template")
-				continue
-			}
-			if refContains(virtualServiceResourceRefMapper(obj, vs), obj) {
-				name := vs.Spec.Listener.Name
-				namespace := obj.GetNamespace()
-				resourceRef := v1alpha1.ResourceRef{Name: name}
-				_, ok := uniq[resourceRef]
-				if ok {
-					continue
-				}
-				reconcileRequests = append(reconcileRequests, reconcile.Request{NamespacedName: types.NamespacedName{
-					Name:      name,
-					Namespace: namespace,
-				}})
-				uniq[resourceRef] = struct{}{}
-			}
-		}
-		return reconcileRequests
-	})
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.Listener{}).
-		Watches(&v1alpha1.VirtualService{}, &virtualservice.EnqueueRequestForVirtualService{Client: mgr.GetClient()}, builder.WithPredicates(virtualservice.GenerationOrMetadataChangedPredicate{})).
-		Watches(&v1alpha1.AccessLogConfig{}, listenerRequestMapper).
-		Watches(&v1alpha1.HttpFilter{}, listenerRequestMapper).
-		Watches(&v1alpha1.Route{}, listenerRequestMapper).
-		Watches(&v1alpha1.Policy{}, listenerRequestMapper).
-		Watches(&v1alpha1.VirtualServiceTemplate{}, listenerRequestMapper).
 		Complete(r)
 }
 
-func (r *ListenerReconciler) makeEnvoySecret(ctx context.Context, nn string, nodeID string) error {
-	kubeSecret := &corev1.Secret{}
-	err := r.Get(ctx, getNamespaceNameFromSecretName(nn), kubeSecret)
-	if err != nil {
-		return errors.New("Secret with certificate not found")
-	}
+// func (r *ListenerReconciler) makeEnvoySecret(ctx context.Context, nn string, nodeIDs []string) error {
+// 	kubeSecret := &corev1.Secret{}
+// 	err := r.Get(ctx, getNamespaceNameFromResourceName(nn), kubeSecret)
+// 	if err != nil {
+// 		return errors.New("Secret with certificate not found")
+// 	}
 
-	if kubeSecret.Type != corev1.SecretTypeTLS && kubeSecret.Type != corev1.SecretTypeOpaque {
-		return errors.New("Kuberentes Secret is not a type TLS or Opaque")
-	}
+// 	if kubeSecret.Type != corev1.SecretTypeTLS && kubeSecret.Type != corev1.SecretTypeOpaque {
+// 		return errors.New("Kuberentes Secret is not a type TLS or Opaque")
+// 	}
 
-	envoySecrets, err := xdscache.MakeEnvoySecretFromKubernetesSecret(kubeSecret)
-	if err != nil {
-		return err
-	}
+// 	envoySecrets, err := xdscache.MakeEnvoySecretFromKubernetesSecret(kubeSecret)
+// 	if err != nil {
+// 		return err
+// 	}
 
-	for _, envoySecret := range envoySecrets {
-		if err := r.Cache.Update(nodeID, envoySecret); err != nil {
-			return err
-		}
-	}
+// 	secretName := getResourceName(kubeSecret.Namespace, kubeSecret.Name)
 
-	return nil
-}
+// 	for _, envoySecret := range envoySecrets {
+// 		if err := r.Cache.Update(nodeIDs, envoySecret, secretName); err != nil { //BLYAT'
+// 			return err
+// 		}
+// 	}
 
-func getNamespaceNameFromSecretName(nn string) types.NamespacedName {
-	nnSplit := strings.Split(nn, "/")
-
-	return types.NamespacedName{
-		Namespace: nnSplit[0],
-		Name:      nnSplit[1],
-	}
-}
+// 	return nil
+// }

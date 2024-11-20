@@ -19,10 +19,11 @@ package v1alpha1
 import (
 	"context"
 	"fmt"
+	"slices"
+
 	rbacv3 "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	rbacFilter "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
-	"slices"
 
 	accesslogv3 "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
@@ -53,7 +54,7 @@ func (vs *VirtualService) Validate(
 		Validate struct
 	**/
 
-	if err := FillFromTemplateIfNeeded(ctx, client, vs); err != nil {
+	if err := vs.FillFromTemplateIfNeeded(ctx, client); err != nil {
 		return err
 	}
 

@@ -50,7 +50,7 @@ e2e-1.29-1.31: envoy-1.31
 	$(CLEANUP_ENVOY)
 
 # E2E tests for Envoy in Kubernetes 1.30
-.PHONY: e2e-1.30
+.PHONY: e2e-1.29
 e2e-1.30: prepare-kind kind-with-registry-1.30 build-deploy-exc e2e-1.30-1.30 e2e-1.30-1.31 cleanup-kind-with-registry
 
 # E2E test on Kubernetes 1.30 for Envoy 1.30

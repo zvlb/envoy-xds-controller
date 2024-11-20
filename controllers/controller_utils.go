@@ -2,17 +2,12 @@ package controllers
 
 import (
 	"context"
-	"fmt"
 
 	v1alpha1 "github.com/kaasops/envoy-xds-controller/api/v1alpha1"
 	"github.com/kaasops/envoy-xds-controller/pkg/errors"
 	"github.com/kaasops/envoy-xds-controller/pkg/utils/k8s"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-func getResourceName(namespace, name string) string {
-	return fmt.Sprintf("%s/%s", namespace, name)
-}
 
 func virtualServiceResourceRefMapper(obj client.Object, vs v1alpha1.VirtualService) []*v1alpha1.ResourceRef {
 	var resources []*v1alpha1.ResourceRef

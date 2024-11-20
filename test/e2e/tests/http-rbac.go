@@ -12,7 +12,7 @@ import (
 func init() {
 	E2ETests = append(
 		E2ETests,
-		//HTTP_RBAC,
+		// HTTP_RBAC,
 		HTTPS_RBAC,
 	)
 }

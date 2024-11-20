@@ -1,13 +1,14 @@
 package tests
 
 import (
+	"os"
+	"testing"
+	"time"
+
 	"github.com/kaasops/envoy-xds-controller/pkg/utils/k8s"
 	"github.com/kaasops/envoy-xds-controller/test/utils"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
-	"os"
-	"testing"
-	"time"
 )
 
 func init() {
