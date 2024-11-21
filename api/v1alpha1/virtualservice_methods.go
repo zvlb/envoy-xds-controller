@@ -19,7 +19,6 @@ package v1alpha1
 import (
 	"context"
 	"encoding/json"
-	"strings"
 
 	"github.com/kaasops/envoy-xds-controller/pkg/merge"
 	"k8s.io/apimachinery/pkg/types"
@@ -30,60 +29,42 @@ import (
 )
 
 func (vs *VirtualService) SetError(ctx context.Context, cl client.Client, msg Message) error {
-	if !vs.validAlredySet() && vs.messageAlredySet(msg) {
+	if !vs.validAlreadySet() && vs.messageAlreadySet(msg) {
 		return nil
 	}
 
 	vs.Status.Message = msg
-	vs.Status.Valid = false
+	vs.Status.Valid = "false"
 
 	return cl.Status().Update(ctx, vs.DeepCopy())
 }
 
 func (vs *VirtualService) SetValid(ctx context.Context, cl client.Client, msg Message) error {
-	if vs.validAlredySet() && vs.messageAlredySet(msg) {
+	if vs.validAlreadySet() && vs.messageAlreadySet(msg) {
 		return nil
 	}
 
 	vs.Status.Message = msg
-	vs.Status.Valid = true
+	vs.Status.Valid = "true"
 
 	return cl.Status().Update(ctx, vs.DeepCopy())
 }
 
-func (vs *VirtualService) SetValidWithUsedSecrets(ctx context.Context, cl client.Client, secrets []string, msg Message) error {
-	err := vs.setUsedSecrets(secrets)
-	if err != nil {
-		return err
+func (vs *VirtualService) SetValidWithUsedResources(
+	ctx context.Context,
+	cl client.Client,
+	usedResources map[ResourceType][]ResourceRef,
+	msg Message,
+) error {
+	if vs.Status.UsedResources == nil {
+		vs.Status.UsedResources = make(map[ResourceType][]ResourceRef)
 	}
 
 	vs.Status.Message = msg
-	vs.Status.Valid = true
+	vs.Status.Valid = "true"
+	vs.Status.UsedResources = usedResources
 
 	return cl.Status().Update(ctx, vs.DeepCopy())
-}
-
-func (vs *VirtualService) setUsedSecrets(secrets []string) error {
-	usedSecrets := []ResourceRef{}
-
-	for _, s := range secrets {
-		splitS := strings.Split(s, "/")
-
-		if len(splitS) != 2 {
-			return errors.New("something go wrong, when trying to get secret namespace and name")
-		}
-
-		usedSecret := ResourceRef{
-			Name:      splitS[1],
-			Namespace: &splitS[0],
-		}
-
-		usedSecrets = append(usedSecrets, usedSecret)
-	}
-
-	vs.Status.UsedSecrets = usedSecrets
-
-	return nil
 }
 
 // func (vs *VirtualService) SetInvalid(ctx context.Context, cl client.Client) error {
@@ -137,11 +118,11 @@ func (vs *VirtualService) getHash() (*uint32, error) {
 	return &hash, nil
 }
 
-func (vs *VirtualService) validAlredySet() bool {
-	return vs.Status.Valid
+func (vs *VirtualService) validAlreadySet() bool {
+	return vs.Status.Valid == "true"
 }
 
-func (vs *VirtualService) messageAlredySet(msg Message) bool {
+func (vs *VirtualService) messageAlreadySet(msg Message) bool {
 	if vs.Status.Message == msg {
 		return true
 	}
@@ -248,13 +229,9 @@ func (vs *VirtualService) GetLinkedListener(cl client.Client) (Listener, error) 
 			return Listener{}, errors.NewUKS(errors.VirtualServiceListenerMustBeSpecified)
 		}
 
-		listenerNN = types.NamespacedName{
-			Name: template.Spec.Listener.Name,
-		}
+		listenerNN.Name = template.Spec.Listener.Name
 	} else {
-		listenerNN = types.NamespacedName{
-			Name: vs.Spec.Listener.Name,
-		}
+		listenerNN.Name = vs.Spec.Listener.Name
 	}
 
 	listener := Listener{}

@@ -34,15 +34,15 @@ type VirtualServiceSpec struct {
 // VirtualServiceStatus defines the observed state of VirtualService
 type VirtualServiceStatus struct {
 	Message         Message                        `json:"message,omitempty"`
-	Valid           bool                           `json:"valid"`
-	UsedResources   map[resourceType][]ResourceRef `json:"usedResources,omitempty"`
+	Valid           string                         `json:"valid"`
+	UsedResources   map[ResourceType][]ResourceRef `json:"usedResources,omitempty"`
 	LastAppliedHash *uint32                        `json:"lastAppliedHash,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 //+kubebuilder:resource:shortName=vs,categories=all
-//+kubebuilder:printcolumn:name="Valid",type="boolean",JSONPath=".status.valid"
+//+kubebuilder:printcolumn:name="Valid",type="string",JSONPath=".status.valid"
 //+kubebuilder:printcolumn:name="Message",type="string",JSONPath=".status.message"
 
 // VirtualService is the Schema for the virtualservices API
@@ -67,12 +67,12 @@ func init() {
 	SchemeBuilder.Register(&VirtualService{}, &VirtualServiceList{})
 }
 
-func (v *VirtualService) GetListener() string {
-	return v.Spec.Listener.Name
+func (vs *VirtualService) GetListener() string {
+	return vs.Spec.Listener.Name
 }
 
-func (v *VirtualService) GetAccessLogConfig() string {
-	return v.Spec.AccessLogConfig.Name
+func (vs *VirtualService) GetAccessLogConfig() string {
+	return vs.Spec.AccessLogConfig.Name
 }
 
 type VirtualServiceRBACSpec struct {

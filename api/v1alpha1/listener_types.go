@@ -23,7 +23,7 @@ import (
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
-//+kubebuilder:printcolumn:name="Valid",type="boolean",JSONPath=".status.valid"
+//+kubebuilder:printcolumn:name="Valid",type="string",JSONPath=".status.valid"
 //+kubebuilder:printcolumn:name="Message",type="string",JSONPath=".status.message"
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
@@ -39,7 +39,7 @@ type Listener struct {
 // ListenerStatus defines the observed state of VirtualService
 type ListenerStatus struct {
 	Message Message `json:"message,omitempty"`
-	Valid   bool    `json:"valid,omitempty"`
+	Valid   string  `json:"valid"`
 }
 
 //+kubebuilder:object:root=true

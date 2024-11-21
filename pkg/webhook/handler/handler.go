@@ -146,7 +146,7 @@ func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.R
 			}
 
 			for _, vs := range virtualServices.Items {
-				for _, us := range vs.Status.UsedSecrets {
+				for _, us := range vs.Status.UsedResources[v1alpha1.SecretType] {
 					if us.Name == req.Name && *us.Namespace == req.Namespace {
 						return admission.Errored(http.StatusInternalServerError, fmt.Errorf("%v. It used in Virtual Service %v/%v", errors.DeleteInKubernetesMessage, vs.Namespace, vs.Name))
 					}

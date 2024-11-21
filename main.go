@@ -255,30 +255,30 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "Listener")
 		os.Exit(1)
 	}
-	if err = (&controllers.EndpointReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Cache:  xDSCache,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Endpoint")
-		os.Exit(1)
-	}
-	if err = (&controllers.VirtualHostReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Cache:  xDSCache,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "VirtualHost")
-		os.Exit(1)
-	}
-	if err = (&controllers.SecretReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Cache:  xDSCache,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Secret")
-		os.Exit(1)
-	}
+	//if err = (&controllers.EndpointReconciler{
+	//	Client: mgr.GetClient(),
+	//	Scheme: mgr.GetScheme(),
+	//	Cache:  xDSCache,
+	//}).SetupWithManager(mgr); err != nil {
+	//	setupLog.Error(err, "unable to create controller", "controller", "Endpoint")
+	//	os.Exit(1)
+	//}
+	//if err = (&controllers.VirtualHostReconciler{
+	//	Client: mgr.GetClient(),
+	//	Scheme: mgr.GetScheme(),
+	//	Cache:  xDSCache,
+	//}).SetupWithManager(mgr); err != nil {
+	//	setupLog.Error(err, "unable to create controller", "controller", "VirtualHost")
+	//	os.Exit(1)
+	//}
+	//if err = (&controllers.SecretReconciler{
+	//	Client: mgr.GetClient(),
+	//	Scheme: mgr.GetScheme(),
+	//	Cache:  xDSCache,
+	//}).SetupWithManager(mgr); err != nil {
+	//	setupLog.Error(err, "unable to create controller", "controller", "Secret")
+	//	os.Exit(1)
+	//}
 	// if err = (&controllers.KubeSecretReconciler{
 	// 	Client: mgr.GetClient(),
 	// 	Scheme: mgr.GetScheme(),

@@ -17,7 +17,7 @@ spec:
   - additionalPrinterColumns:
     - jsonPath: .status.valid
       name: Valid
-      type: boolean
+      type: string
     - jsonPath: .status.message
       name: Message
       type: string
@@ -55,7 +55,9 @@ spec:
               message:
                 type: string
               valid:
-                type: boolean
+                type: string
+            required:
+            - valid
             type: object
         type: object
     served: true

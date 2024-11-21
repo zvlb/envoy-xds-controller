@@ -27,12 +27,12 @@ import (
 )
 
 func (l *Listener) SetError(ctx context.Context, cl client.Client, msg Message) error {
-	if !l.validAlredySet() && l.messageAlredySet(msg) {
+	if l.validAlreadySet() != "true" && l.messageAlreadySet(msg) {
 		return nil
 	}
 
 	l.Status.Message = msg
-	l.Status.Valid = false
+	l.Status.Valid = "false"
 
 	// TODO: Get all linked VirtualServices and update status to false
 
@@ -40,22 +40,22 @@ func (l *Listener) SetError(ctx context.Context, cl client.Client, msg Message) 
 }
 
 func (l *Listener) SetValid(ctx context.Context, cl client.Client, msg Message) error {
-	// If alredy set, return
-	if l.validAlredySet() && l.messageAlredySet(msg) {
+	// If already set, return
+	if l.validAlreadySet() == "true" && l.messageAlreadySet(msg) {
 		return nil
 	}
 
 	l.Status.Message = msg
-	l.Status.Valid = true
+	l.Status.Valid = "true"
 
 	return cl.Status().Update(ctx, l.DeepCopy())
 }
 
-func (l *Listener) validAlredySet() bool {
+func (l *Listener) validAlreadySet() string {
 	return l.Status.Valid
 }
 
-func (l *Listener) messageAlredySet(msg Message) bool {
+func (l *Listener) messageAlreadySet(msg Message) bool {
 	if l.Status.Message == msg {
 		return true
 	}

@@ -7,9 +7,9 @@ type ResourceRef struct {
 	Namespace *string `json:"namespace,omitempty"`
 }
 
-type resourceType string
+type ResourceType string
 
 const (
-	ClusterType resourceType = "clusters"
-	SecretType  resourceType = "secrets"
+	ClusterType ResourceType = "clusters"
+	SecretType  ResourceType = "secrets"
 )

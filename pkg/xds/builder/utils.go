@@ -4,8 +4,8 @@ import (
 	"fmt"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	"github.com/kaasops/envoy-xds-controller/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func makeEnvoySecretFromKubernetesSecret(kubeSecret *corev1.Secret) ([]*tlsv3.Secret, error) {

@@ -17,42 +17,12 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"fmt"
+	"context"
+	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
+	"github.com/kaasops/envoy-xds-controller/pkg/errors"
 	"github.com/kaasops/envoy-xds-controller/pkg/options"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-//func GetClusterRefByxDSName(
-//	ctx context.Context,
-//	cl client.Client,
-//	namespace, name string,
-//) (ResourceRef, error) {
-//	clusterList := &ClusterList{}
-//	if err := cl.List(
-//		ctx,
-//		clusterList,
-//		client.InNamespace(namespace),
-//		client.MatchingFields{options.ClusterNameField: name},
-//		client.MatchingFields{options.VirtualServiceStatusValidField: "true"},
-//	); err != nil {
-//		return ResourceRef{}, errors.Wrap(err, errors.GetFromKubernetesMessage)
-//	}
-//
-//	if len(clusterList.Items) == 0 {
-//		return ResourceRef{}, errors.New(fmt.Sprintf("cluster %s not found", name))
-//	}
-//
-//	if len(clusterList.Items) > 1 {
-//		return ResourceRef{}, errors.New(fmt.Sprintf("multiple clusters found with name %s", name))
-//	}
-//
-//	cluster := clusterList.Items[0]
-//
-//	return ResourceRef{
-//		Name:      cluster.Name,
-//		Namespace: &cluster.Namespace,
-//	}, nil
-//}
 
 func GetClusterByxDSName(
 	ctx context.Context,
@@ -60,23 +30,29 @@ func GetClusterByxDSName(
 	namespace, name string,
 ) (*Cluster, error) {
 	clusterList := &ClusterList{}
+
+	if namespace == "default" {
+		namespace = ""
+	}
+
 	if err := cl.List(
 		ctx,
 		clusterList,
 		client.InNamespace(namespace),
-		client.MatchingFields{options.ClusterNameField: name},
-		client.MatchingFields{options.VirtualServiceStatusValidField: "true"},
 	); err != nil {
 		return nil, errors.Wrap(err, errors.GetFromKubernetesMessage)
 	}
 
-	if len(clusterList.Items) == 0 {
-		return nil, errors.New(fmt.Sprintf("cluster %s not found", name))
+	for _, cluster := range clusterList.Items {
+		clusterV3 := &clusterv3.Cluster{}
+		if err := options.Unmarshaler.Unmarshal(cluster.Spec.Raw, clusterV3); err != nil {
+			return nil, errors.Wrap(err, errors.UnmarshalMessage)
+		}
+
+		if clusterV3.Name == name {
+			return &cluster, nil
+		}
 	}
 
-	if len(clusterList.Items) > 1 {
-		return nil, errors.New(fmt.Sprintf("multiple clusters found with name %s", name))
-	}
-
-	return &clusterList.Items[0], nil
+	return nil, nil
 }

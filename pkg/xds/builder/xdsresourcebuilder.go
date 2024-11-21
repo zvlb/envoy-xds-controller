@@ -168,6 +168,88 @@ func (xrb *XdsResourceBuilder) GetUsedSecrets() []*tlsv3.Secret {
 	return xrb.usedSecrets
 }
 
+func (xrb *XdsResourceBuilder) GetUsedResources(
+	ctx context.Context,
+	cl client.Client,
+	namesapce string,
+) (map[v1alpha1.ResourceType][]v1alpha1.ResourceRef, error) {
+	usedResources := map[v1alpha1.ResourceType][]v1alpha1.ResourceRef{}
+
+	secrets := xrb.getUsedSecretsResourceRefs()
+	clusters, err := xrb.getUsedClustersResourceRefs(ctx, cl, namesapce)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO: get templates, routes, accesslogs etc
+
+	usedResources[v1alpha1.SecretType] = secrets
+	usedResources[v1alpha1.ClusterType] = clusters
+
+	return usedResources, nil
+}
+
+func (xrb *XdsResourceBuilder) getUsedSecretsResourceRefs() []v1alpha1.ResourceRef {
+	var resourceRefs []v1alpha1.ResourceRef
+
+	for _, secretV3 := range xrb.usedSecrets {
+		secretV3Name := secretV3.Name
+		namespace, name, err := k8s.SplitResourceName(secretV3Name)
+		if err != nil {
+			return nil
+		}
+
+		resourceRefs = append(resourceRefs, v1alpha1.ResourceRef{
+			Namespace: &namespace,
+			Name:      name,
+		})
+	}
+
+	return resourceRefs
+}
+
+func (xrb *XdsResourceBuilder) getUsedClustersResourceRefs(
+	ctx context.Context,
+	cl client.Client,
+	namespace string,
+) ([]v1alpha1.ResourceRef, error) {
+	var resourceRefs []v1alpha1.ResourceRef
+
+	if namespace == "default" {
+		namespace = ""
+	}
+	clusterList := &v1alpha1.ClusterList{}
+	if err := cl.List(
+		ctx,
+		clusterList,
+		client.InNamespace(namespace),
+	); err != nil {
+		return resourceRefs, err
+	}
+
+	for _, clusterV3 := range xrb.usedClusters {
+		clusterV3Name := clusterV3.Name
+
+		for _, clusterKube := range clusterList.Items {
+			clusterKubeV3 := clusterv3.Cluster{}
+			if err := options.Unmarshaler.Unmarshal(clusterKube.Spec.Raw, &clusterKubeV3); err != nil {
+				return resourceRefs, err
+			}
+			if clusterKubeV3.Name == clusterV3Name {
+				if clusterKube.Namespace == "" {
+					clusterKube.Namespace = "default"
+				}
+				resourceRefs = append(resourceRefs, v1alpha1.ResourceRef{
+					Namespace: &clusterKube.Namespace,
+					Name:      clusterKube.Name,
+				})
+			}
+		}
+	}
+
+	return resourceRefs, nil
+}
+
 func (xrb *XdsResourceBuilder) fillUsedSecrets(
 	ctx context.Context,
 	cl client.Client,
@@ -275,7 +357,7 @@ func (xrb *XdsResourceBuilder) fillUsedClusters(
 			log.Fatalf("Failed to unmarshal JSON: %v", err)
 		}
 
-		fieldName := "cluster"
+		fieldName := "Cluster"
 		clusterNames := findClusterNames(data, fieldName)
 
 		for _, clusterName := range clusterNames {
@@ -292,6 +374,10 @@ func (xrb *XdsResourceBuilder) fillUsedClusters(
 			)
 			if err != nil {
 				return errors.Wrap(err, "cannot get cluster CR name")
+			}
+
+			if kubeCluster == nil {
+				continue
 			}
 
 			v3Cluster := &clusterv3.Cluster{}

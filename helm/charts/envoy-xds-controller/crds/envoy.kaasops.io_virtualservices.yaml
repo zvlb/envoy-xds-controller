@@ -21,7 +21,7 @@ spec:
   - additionalPrinterColumns:
     - jsonPath: .status.valid
       name: Valid
-      type: boolean
+      type: string
     - jsonPath: .status.message
       name: Message
       type: string
@@ -162,17 +162,19 @@ spec:
                 type: integer
               message:
                 type: string
-              usedSecrets:
-                items:
-                  properties:
-                    name:
-                      type: string
-                    namespace:
-                      type: string
-                  type: object
-                type: array
+              usedResources:
+                additionalProperties:
+                  items:
+                    properties:
+                      name:
+                        type: string
+                      namespace:
+                        type: string
+                    type: object
+                  type: array
+                type: object
               valid:
-                type: boolean
+                type: string
             required:
             - valid
             type: object

@@ -1,0 +1,22 @@
+apiVersion: envoy.kaasops.io/v1alpha1
+kind: VirtualService
+metadata:
+  name: virtual-service-used-route
+  annotations:
+    envoy.kaasops.io/node-id: test,777
+spec:
+  listener:
+    name: http
+  accessLogConfig:
+    name: stdout
+  additionalHttpFilters:
+  - name: router
+  virtualHost:
+    domains:
+    - "*"
+    name: test
+    routes: 
+    - match:
+        prefix: "/"
+      route:
+        cluster: static

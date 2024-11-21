@@ -18,13 +18,11 @@ package controllers
 
 import (
 	"context"
-	"github.com/kaasops/envoy-xds-controller/pkg/utils/k8s"
-
 	"github.com/go-logr/logr"
-
 	v1alpha1 "github.com/kaasops/envoy-xds-controller/api/v1alpha1"
 	"github.com/kaasops/envoy-xds-controller/pkg/config"
 	"github.com/kaasops/envoy-xds-controller/pkg/errors"
+	"github.com/kaasops/envoy-xds-controller/pkg/utils/k8s"
 
 	api_errors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -117,7 +115,31 @@ func (r *VirtualServiceReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
-	// TODO: Get all synced resources and add to VS status
+	// Create HashMap for fast searching of certificates
+	//secretIndex, err := k8s.IndexCertificateSecrets(ctx, r.Client, r.Config.GetWatchNamespaces())
+	//if err != nil {
+	//	return ctrl.Result{}, errors.Wrap(err, "cannot generate TLS certificates index from Kubernetes secrets")
+	//}
+	//
+	//xdsResourceBuilder, err := builder.New(
+	//	ctx,
+	//	r.Client,
+	//	virtualServiceCR,
+	//	secretIndex,
+	//)
+	//if err != nil {
+	//	return ctrl.Result{}, errors.Wrap(err, "cannot create XDS resource builder")
+	//}
+	//
+	//usedResources, err := xdsResourceBuilder.GetUsedResources(ctx, r.Client, req.Namespace)
+	//if err != nil {
+	//	return ctrl.Result{}, errors.Wrap(err, "cannot get user clusters")
+	//}
+	//
+	//err = virtualServiceCR.SetValidWithUsedResources(ctx, r.Client, usedResources, "")
+	//if err != nil {
+	//	return ctrl.Result{}, err
+	//}
 
 	// Start Listener Reconcile
 	r.ListenerEventCh <- event.GenericEvent{
